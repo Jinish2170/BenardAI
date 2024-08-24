@@ -1,0 +1,10 @@
+customtkinter
+python-magic
+SpeechRecognition
+scikit-learn
+numpy
+pdfplumber
+python-pptx
+pefile
+pyttsx3
+Pillow
