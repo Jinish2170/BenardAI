@@ -8,3 +8,6 @@ python-pptx
 pefile
 pyttsx3
 Pillow
+gtts
+nmap
+scikit-learn

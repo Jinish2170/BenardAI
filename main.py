@@ -1,5 +1,5 @@
-from scripts.gui import DariusAI
+from GUI import BenardApp
 
 if __name__ == "__main__":
-    app = DariusAI()
+    app = BenardApp()
     app.mainloop()
