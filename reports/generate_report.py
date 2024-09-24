@@ -1,15 +1,14 @@
-from fpdf import FPDF
+import pdfkit
 
-def generate_report():
-    pdf = FPDF()
-    pdf.add_page()
-    
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="BenardAI Scan Report", ln=True, align="C")
-
-    # Add dummy content (replace with actual results)
-    pdf.cell(200, 10, txt="Scan Results:", ln=True)
-    pdf.cell(200, 10, txt="File Scan: Malicious", ln=True)
-    pdf.cell(200, 10, txt="Network Scan: No vulnerabilities", ln=True)
-
-    pdf.output("scan_report.pdf")
+def generate_report(scan_results, output_path="report.pdf"):
+    # Here we can generate a PDF report
+    html = f"""
+    <html>
+    <body>
+        <h1>Scan Results</h1>
+        <p>{scan_results}</p>
+    </body>
+    </html>
+    """
+    pdfkit.from_string(html, output_path)
+    print(f"Report generated at {output_path}")

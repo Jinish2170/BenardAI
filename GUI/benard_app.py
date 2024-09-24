@@ -1,11 +1,10 @@
-import tkinter as tk
-from tkinter import filedialog
 import customtkinter as ctk
+from tkinter import filedialog
 import threading
-from utils import speak, load_image
-from model import load_or_train_model
-from file_scanner import scan_file
-from network_scanner import run_network_scan
+from utils.speak import speak
+from scanners.file_scanner import scan_file
+from scanners.network_scanner import run_network_scan
+from reports.generate_report import generate_report
 
 class BenardApp(ctk.CTk):
     def __init__(self):
@@ -47,12 +46,8 @@ class BenardApp(ctk.CTk):
             btn = ctk.CTkButton(self.input_frame, text=btn_text, command=command, fg_color="transparent", hover_color="#4CAF50", text_color="white")
             btn.pack(side="right", padx=10)
 
-        # Load Model
-        self.model, self.vectorizer = load_or_train_model()
-
-        # Welcome Message
-        self.insert_text("BenardAI: Hello! I'm BenardAI, your cybersecurity assistant.\n", "greeting")
-        speak("Hello! I'm BenardAI, your cybersecurity assistant. How can I help you today?")
+        # Debugging info while loading model
+        self.insert_text("BenardAI: Initializing...\n", "info")
 
     def insert_text(self, text, tag="default"):
         """Insert text into the conversation frame."""
@@ -66,28 +61,32 @@ class BenardApp(ctk.CTk):
         user_input = self.input_entry.get()
         if user_input:
             self.insert_text(f"You: {user_input}\n")
-            self.input_entry.delete(0, tk.END)
-            # Handle user input here (e.g., call a bot function)
+            self.input_entry.delete(0, ctk.END)
+            # Handle user input here
 
     def browse_file(self):
         """Open file dialog to browse and scan a file."""
         file_path = filedialog.askopenfilename()
         if file_path:
             self.insert_text(f"You selected: {file_path}\n")
+            self.insert_text("BenardAI: Scanning file...\n", "info")
             threading.Thread(target=self.scan_file, args=(file_path,)).start()
 
     def scan_file(self, file_path):
         """Scan the selected file."""
         try:
-            scan_file(file_path, self.model, self.vectorizer, self)
+            scan_file(file_path)
+            self.insert_text(f"Scan complete: {file_path}\n", "success")
+            speak("Scan complete")
         except Exception as e:
             self.insert_text(f"Error: {e}\n", "error")
 
     def listen(self):
         """Handle voice input."""
+        speak("Listening for input...")
         # Implement voice input handling here
-        pass
 
     def network_scan(self):
         """Handle network scanning."""
+        self.insert_text("BenardAI: Starting network scan...\n", "info")
         threading.Thread(target=run_network_scan, args=(self,)).start()

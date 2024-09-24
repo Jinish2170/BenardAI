@@ -1,6 +1,5 @@
-import sys
-from GUI.BenardApp import BenardApp
+from GUI.benard_app import BenardApp
 
 if __name__ == "__main__":
     app = BenardApp()
-    app.run()
+    app.mainloop()
