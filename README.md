@@ -42,9 +42,24 @@ Bernard       → static + intel + LLM synthesis with auditable citations, on yo
 
 <img src="docs/dashboard.png" alt="Bernard threat triage dashboard" width="900" />
 
-*Live analysis of a Windows PE — verdict card with classification + severity + confidence pills, citation pills (`[pe.suspicious_imports]`) linking to evidence, MITRE ATT&CK techniques mapped from grounded evidence, and a full evidence audit table.*
+*Live analysis of a Windows PE. Sticky glass topbar shows the configured LLM model + a color-coded status chip per intel provider (VT · AbuseIPDB · abuse.ch · MITRE). Drag-and-drop file zone, large semantic verdict badge (skull / warn / check / help by classification), meta pills (Sev · Conf · Time · Model · Evidence count), citation pills like `[pe.suspicious_imports]` that map back to actual evidence rows, and a "Why Bernard abstained" section when the LLM correctly refused to guess.*
 
 </div>
+
+### What you can do in the UI
+
+| | |
+|---|---|
+| 🎯 **Drag-and-drop file zone** | Drop any artifact (PE, PDF, Office, script…) or click to choose. Real-time file chip preview. |
+| 🔤 **Smart text input** | Paste a URL, IP, domain, or hash — Bernard auto-detects the kind. |
+| 🎨 **Verdict hero card** | Large badge with classification icon, gradient accent tinted by severity, summary, plus a meta-pill strip for at-a-glance review |
+| 🔗 **Citation pills** | Every `[analyzer.field]` token in a key indicator renders as a tooltipped pill — click-through to the matching evidence row |
+| 📂 **Evidence grouped by analyzer** | Collapsible group cards (pe / pdf / yara / virustotal / …) with a max-severity badge per group |
+| 🛰 **MITRE chip → detail card** | Click any technique chip and Bernard fetches the official ATT&CK description, tactic tags, and `attack.mitre.org` link on demand |
+| 📡 **Streaming progress** | Each pipeline phase (search → analyze → enrich → triage) streams live via NDJSON; the latest phase pulses |
+| 🗂 **History tab** | Past analyses persisted to disk, click any row to reopen the full record |
+| ⬇ **Export JSON** | One click downloads the full record (evidence + verdict + stats) for offline review or pipeline ingestion |
+| ✨ **Polish** | Sticky glass topbar, JetBrains Mono for citations, fade-in animations, responsive `<720px` layout |
 
 ---
 
@@ -126,15 +141,26 @@ bernard scan --file sample.docm --json   # raw JSON for piping
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `LLM_API_KEY` | *(required)* | API key for the LLM provider |
+| `LLM_API_KEY` | *(see auto-discovery below)* | API key for the LLM provider |
 | `LLM_BASE_URL` | `https://integrate.api.nvidia.com/v1` | OpenAI-compatible endpoint |
 | `LLM_MODEL` | `meta/llama-3.3-70b-instruct` | Model id at that endpoint |
 | `VT_API_KEY` | *(optional)* | Enables VirusTotal hash/URL/IP lookups (free tier: 4 req/min) |
 | `ABUSEIPDB_API_KEY` | *(optional)* | Enables AbuseIPDB IP reputation (free: 1000 req/day) |
 | `ABUSECH_API_KEY` | *(optional)* | Enables URLhaus, ThreatFox, MalwareBazaar (free at [auth.abuse.ch](https://auth.abuse.ch/)) |
+| `CCNIM_ENV` | *(optional)* | Override the auto-discovery path for the cc-nim env file |
 | `PORT` | `3003` | API server port |
 | `MAX_UPLOAD_MB` | `100` | Per-upload size cap |
 | `ANALYSIS_TIMEOUT_S` | `120` | Per-analysis hard timeout |
+
+### 🔑 NVIDIA NIM key auto-discovery
+
+If `LLM_API_KEY` is empty, Bernard automatically resolves it from `NVIDIA_NIM_API_KEY` in your central [cc-nim](https://github.com/cc-nim/cc-nim) `.env`. Default lookup order:
+
+1. `$CCNIM_ENV` (explicit override)
+2. `C:\files\coding dev era\claude code\cc-nim\.env`
+3. `~/cc-nim/.env`
+
+That means you keep a single source of truth for the NVIDIA NIM key and Bernard picks it up without copying it around. Set `LLM_API_KEY` in `.env` to override.
 
 ### Alternate LLM providers
 
@@ -207,11 +233,12 @@ These rules are baked into both the system prompt (`src/bernard/triage/prompts.p
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET`  | `/health` | Liveness + configured model |
+| `GET`  | `/health` | Liveness + model + flags for `llm_configured` · `vt_configured` · `abuseipdb_configured` · `abusech_configured` · `mitre_loaded` (powers the dashboard's status chips) |
 | `POST` | `/analyze` | Multipart `file=` OR form `value=...` (url/ip/domain/hash). Returns full record. |
 | `POST` | `/analyze/stream` | Same payload, streams progress as NDJSON (`{event: "progress", data: {...}}`) followed by a final `{event: "result", data: AnalysisRecord}` |
 | `GET`  | `/analyses?limit=50` | List past analyses (newest first) |
 | `GET`  | `/analysis/{id}` | Load full past record |
+| `GET`  | `/technique/{technique_id}` | MITRE ATT&CK technique metadata (name · description · tactics · `attack.mitre.org` URL) — used by the dashboard to render technique detail cards on demand |
 
 ### Example
 
