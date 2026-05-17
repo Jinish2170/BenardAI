@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 
 type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
@@ -15,14 +15,12 @@ interface Evidence {
   source_url?: string | null;
   collected_at: string;
 }
-
 interface MitreTechnique {
   technique_id: string;
   name: string;
   rationale: string;
   cites: string[];
 }
-
 interface Verdict {
   classification: Classification;
   severity: Severity;
@@ -33,7 +31,6 @@ interface Verdict {
   recommended_actions: string[];
   abstention_reason?: string | null;
 }
-
 interface AnalysisRecord {
   id: string;
   input: { kind: string; value: string; filename?: string | null };
@@ -42,44 +39,145 @@ interface AnalysisRecord {
   stats: Record<string, unknown>;
   created_at: string;
 }
-
 interface HistoryItem {
   id: string; kind: string; value: string;
   classification: string; severity: Severity;
   created_at: string; evidence_count: number;
 }
+interface HealthInfo {
+  model: string;
+  llm_configured: boolean;
+  vt_configured: boolean;
+  abuseipdb_configured: boolean;
+  abusech_configured: boolean;
+  mitre_loaded: boolean;
+  version: string;
+}
+interface TechniqueMeta {
+  technique_id: string; name: string;
+  description: string; tactics: string[];
+  url?: string;
+}
+
+const SEV_RANK: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+
+// SVG icons (inline so we keep zero icon-lib weight)
+const I = {
+  upload: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  ),
+  shield: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  ),
+  check: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  warn: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  skull: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="10" r="8" />
+      <line x1="9" y1="10" x2="9.01" y2="10" />
+      <line x1="15" y1="10" x2="15.01" y2="10" />
+      <path d="M8 17h8M10 21v-2M14 21v-2" />
+    </svg>
+  ),
+  help: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  chevron: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
+  download: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  ),
+  inbox: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </svg>
+  ),
+};
+
+function badgeFor(c: Classification) {
+  if (c === 'benign') return I.check;
+  if (c === 'suspicious') return I.warn;
+  if (c === 'malicious') return I.skull;
+  return I.help;
+}
 
 function App() {
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState<{phase: string; message: string}[]>([]);
+  const [progress, setProgress] = useState<{ phase: string; message: string }[]>([]);
   const [result, setResult] = useState<AnalysisRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('verdict');
   const [history, setHistory] = useState<HistoryItem[]>([]);
-
-  const fetchHistory = async () => {
-    try {
-      const r = await fetch('/api/analyses?limit=50');
-      if (!r.ok) return;
-      const j = await r.json();
-      setHistory(j.analyses || []);
-    } catch { /* silent */ }
-  };
+  const [health, setHealth] = useState<HealthInfo | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedMitre, setExpandedMitre] = useState<string | null>(null);
+  const [techCache, setTechCache] = useState<Record<string, TechniqueMeta>>({});
 
   useEffect(() => {
-    if (tab === 'history') fetchHistory();
-  }, [tab]);
+    fetch('/api/health')
+      .then((r) => { if (r.ok) return r.json(); })
+      .then((j) => { if (j) setHealth(j); })
+      .catch(() => {});
+  }, []);
 
-  const runAnalysis = async () => {
+  useEffect(() => {
+    if (tab === 'history') {
+      fetch('/api/analyses?limit=50')
+        .then(r => r.json())
+        .then(j => setHistory(j.analyses || []))
+        .catch(() => {});
+    }
+  }, [tab, result]);
+
+  const fetchTechnique = async (id: string) => {
+    if (techCache[id]) return;
+    try {
+      const r = await fetch(`/api/technique/${encodeURIComponent(id)}`);
+      if (r.ok) {
+        const meta = await r.json();
+        setTechCache((c) => ({ ...c, [id]: meta }));
+      }
+    } catch { /* swallow */ }
+  };
+
+  const run = async () => {
     if (!file && !text.trim()) return;
     setLoading(true);
     setError(null);
     setResult(null);
     setProgress([]);
     setTab('verdict');
-
     const fd = new FormData();
     if (file) fd.append('file', file);
     if (text.trim()) fd.append('value', text.trim());
@@ -100,14 +198,10 @@ function App() {
           if (!line.trim()) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.event === 'progress') {
-              setProgress((p) => [...p, evt.data]);
-            } else if (evt.event === 'result') {
-              setResult(evt.data);
-            } else if (evt.event === 'error') {
-              setError(evt.data?.message || 'Analysis failed');
-            }
-          } catch { /* skip malformed */ }
+            if (evt.event === 'progress') setProgress((p) => [...p, evt.data]);
+            else if (evt.event === 'result') setResult(evt.data);
+            else if (evt.event === 'error') setError(evt.data?.message || 'Analysis failed');
+          } catch { /* skip */ }
         }
       }
     } catch (err) {
@@ -139,115 +233,205 @@ function App() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `bernard-${result.id}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
-  const renderCitations = (text: string) => {
-    const parts = text.split(/(\[[a-z][a-z0-9_]*\.[a-z0-9_]+\])/g);
-    return parts.map((part, i) => {
-      const m = part.match(/^\[([a-z][a-z0-9_]*)\.([a-z0-9_]+)\]$/);
-      if (!m) return <span key={i}>{part}</span>;
-      return <span key={i} className="cite" title={`${m[1]}.${m[2]}`}>{m[1]}.{m[2]}</span>;
+  const renderCit = (s: string) => {
+    const parts = s.split(/(\[[a-z][a-z0-9_]*\.[a-z0-9_]+\])/g);
+    return parts.map((p, i) => {
+      const m = p.match(/^\[([a-z][a-z0-9_]*)\.([a-z0-9_]+)\]$/);
+      return m ? <span key={i} className="cite" title={`Cite: ${m[1]}.${m[2]}`}>{m[1]}.{m[2]}</span>
+               : <span key={i}>{p}</span>;
     });
+  };
+
+  const evidenceGroups = useMemo(() => {
+    if (!result) return [];
+    const map = new Map<string, Evidence[]>();
+    for (const e of result.evidence) {
+      const arr = map.get(e.analyzer) || [];
+      arr.push(e);
+      map.set(e.analyzer, arr);
+    }
+    return Array.from(map.entries()).map(([analyzer, items]) => ({
+      analyzer,
+      items,
+      maxSev: items.reduce((m, e) => SEV_RANK[e.severity] > SEV_RANK[m] ? e.severity : m, 'info' as Severity),
+    })).sort((a, b) => SEV_RANK[b.maxSev] - SEV_RANK[a.maxSev]);
+  }, [result]);
+
+  const toggleGroup = (name: string) => {
+    setCollapsedGroups((s) => {
+      const n = new Set(s);
+      n.has(name) ? n.delete(name) : n.add(name);
+      return n;
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) setFile(f);
   };
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="logo">
-          <span className="logo-icon">B</span>
-          <h1>Bernard</h1>
+      <div className="topbar">
+        <div className="brand">
+          <span className="brand-icon">B</span>
+          <div className="brand-text">
+            <div className="brand-name">Bernard</div>
+            <div className="brand-sub">AI threat triage workstation</div>
+          </div>
         </div>
-        <p className="tagline">Self-hosted AI threat triage — analyze files, URLs, IPs, domains, and hashes with cited verdicts</p>
-      </header>
-
-      <div className="controls">
-        <div>
-          <label>File upload</label>
-          <input
-            type="file"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          />
-          <div className="divider" style={{ margin: '1.2rem 0 0.8rem' }}></div>
-          <label>URL / IP / domain / hash</label>
-          <input
-            type="text"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !loading && runAnalysis()}
-            placeholder="https://malicious.test/payload.exe  ·  8.8.8.8  ·  d41d8cd98f00b204e9800998ecf8427e"
-            className="mono"
-          />
-        </div>
-        <div className="right">
-          <button onClick={runAnalysis} disabled={loading || (!file && !text.trim())} className="scan-btn">
-            {loading ? 'Analyzing...' : 'Analyze'}
-          </button>
-          <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.3rem', lineHeight: 1.4 }}>
-            Pipeline: static analysis → threat-intel enrichment → LLM verdict with MITRE mapping
-          </p>
+        <div className="topbar-status">
+          {health && (
+            <>
+              <span className="status-chip" title="LLM model">
+                <span className={`status-dot ${health.llm_configured ? 'on' : 'off'}`}></span>
+                {health.model.split('/').pop()}
+              </span>
+              <span className="status-chip" title="VirusTotal key">
+                <span className={`status-dot ${health.vt_configured ? 'on' : 'off'}`}></span>
+                VT
+              </span>
+              <span className="status-chip" title="AbuseIPDB key">
+                <span className={`status-dot ${health.abuseipdb_configured ? 'on' : 'off'}`}></span>
+                AbuseIPDB
+              </span>
+              <span className="status-chip" title="abuse.ch key (URLhaus/ThreatFox/MalwareBazaar)">
+                <span className={`status-dot ${health.abusech_configured ? 'on' : 'off'}`}></span>
+                abuse.ch
+              </span>
+              <span className="status-chip" title="MITRE ATT&CK catalog loaded">
+                <span className={`status-dot ${health.mitre_loaded ? 'on' : 'off'}`}></span>
+                MITRE
+              </span>
+            </>
+          )}
         </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      <div className="hero">
+        <h1>Triage anything in one click.</h1>
+        <p className="tagline">
+          Drop a file or paste a URL / IP / domain / hash. Bernard runs deterministic
+          static analysis + threat-intel enrichment, then asks the LLM for a verdict —
+          with every claim cited to evidence.
+        </p>
+      </div>
+
+      <div className="input-card">
+        <label
+          className={`drop-zone ${dragging ? 'dragging' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+        >
+          <div className="drop-zone-icon">{I.upload}</div>
+          <div className="drop-zone-label">
+            {file ? 'Drop another file or click to replace' : 'Drop a file here, or click to choose'}
+          </div>
+          <div className="drop-zone-hint">PE · PDF · Office · scripts · any artifact</div>
+          {file && <div className="drop-zone-file">📎 {file.name} · {(file.size / 1024).toFixed(1)} KB</div>}
+          <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        </label>
+
+        <div className="row">
+          <input
+            type="text"
+            className="text-input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !loading && run()}
+            placeholder='https://malicious.test/payload  ·  8.8.8.8  ·  evil.example.com  ·  275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f'
+          />
+          <button className="scan-btn" onClick={run} disabled={loading || (!file && !text.trim())}>
+            {loading ? <><span className="spinner"></span> Analyzing</> : <>{I.shield} Analyze</>}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="error">⚠ {error}</div>}
 
       {loading && progress.length > 0 && (
-        <div className="progress">
+        <div className="progress slide-up">
           {progress.map((p, i) => (
-            <div key={i} className="progress-line">
+            <div key={i} className={`progress-line ${i === progress.length - 1 ? 'active' : ''}`}>
               <span className="phase">{p.phase}</span>
-              {p.message}
+              <span>{p.message}</span>
             </div>
           ))}
         </div>
       )}
 
       <div className="tabs">
-        <button className={tab === 'verdict' ? 'active' : ''} onClick={() => setTab('verdict')}>Verdict</button>
+        <button className={tab === 'verdict' ? 'active' : ''} onClick={() => setTab('verdict')}>
+          Verdict
+        </button>
         <button className={tab === 'evidence' ? 'active' : ''} onClick={() => setTab('evidence')}>
-          Evidence{result ? ` (${result.evidence.length})` : ''}
+          Evidence {result && <span className="count">{result.evidence.length}</span>}
         </button>
         <button className={tab === 'mitre' ? 'active' : ''} onClick={() => setTab('mitre')}>
-          MITRE{result ? ` (${result.verdict.mitre_techniques.length})` : ''}
+          MITRE {result && <span className="count">{result.verdict.mitre_techniques.length}</span>}
         </button>
-        <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>History</button>
-        {result && <button onClick={exportJSON} className="export-btn">⬇ Export JSON</button>}
+        <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>
+          History
+        </button>
+        <div className="spacer" />
+        {result && <button onClick={exportJSON} className="export-btn">{I.download} Export JSON</button>}
       </div>
 
       {tab === 'verdict' && (
         <div className="tab-content">
           {!result && !loading && (
-            <p style={{ color: 'var(--text-secondary)' }}>
-              Drop a file or paste a URL/IP/domain/hash above. Bernard runs deterministic
-              static analysis + threat-intel enrichment first, then asks the LLM for a verdict
-              grounded in that evidence.
-            </p>
+            <div className="empty-state">
+              <div className="icon">{I.shield}</div>
+              <h4>No analysis yet</h4>
+              <p>Drop a file or paste an indicator above to get a cited verdict.</p>
+            </div>
           )}
           {result && (
             <>
-              <div className={`verdict-card ${result.verdict.classification}`}>
-                <div className="verdict-class">{result.verdict.classification}</div>
-                <div className="verdict-summary">{result.verdict.summary}</div>
-                <div className="verdict-meta">
-                  <span className={`verdict-pill sev-${result.verdict.severity}`}>
-                    {result.verdict.severity}
-                  </span>
-                  <span className="verdict-pill">conf {result.verdict.confidence}</span>
-                  <span className="verdict-pill mono" style={{ fontSize: '0.65rem' }}>
-                    {(((result.stats?.duration_ms as number) ?? 0) / 1000).toFixed(1)}s
-                  </span>
+              <div className={`verdict-hero ${result.verdict.classification} fade-in`}>
+                <div className="verdict-badge">
+                  <span className="icon">{badgeFor(result.verdict.classification)}</span>
+                  <span className="label">{result.verdict.classification}</span>
+                </div>
+                <div className="verdict-body">
+                  <div className="verdict-classification">{result.verdict.classification}</div>
+                  <p className="verdict-summary">{result.verdict.summary}</p>
+                  <div className="verdict-meta">
+                    <span className={`meta-pill sev-${result.verdict.severity}`}>
+                      <span className="k">Sev</span> {result.verdict.severity}
+                    </span>
+                    <span className="meta-pill"><span className="k">Conf</span> {result.verdict.confidence}</span>
+                    <span className="meta-pill">
+                      <span className="k">Time</span>
+                      {(((result.stats?.duration_ms as number) ?? 0) / 1000).toFixed(1)}s
+                    </span>
+                    <span className="meta-pill">
+                      <span className="k">Model</span>
+                      {(result.stats?.llm_model as string)?.split('/').pop() || 'n/a'}
+                    </span>
+                    <span className="meta-pill">
+                      <span className="k">Evidence</span> {result.evidence.length}
+                    </span>
+                  </div>
                 </div>
               </div>
 
               {result.verdict.key_indicators.length > 0 && (
                 <div className="section">
-                  <h3>Key indicators</h3>
+                  <div className="section-head">
+                    <h3>Key indicators</h3>
+                    <span className="badge">{result.verdict.key_indicators.length}</span>
+                  </div>
                   <ul className="bullets">
                     {result.verdict.key_indicators.map((ind, i) => (
-                      <li key={i}>{renderCitations(ind)}</li>
+                      <li key={i}>{renderCit(ind)}</li>
                     ))}
                   </ul>
                 </div>
@@ -255,7 +439,10 @@ function App() {
 
               {result.verdict.recommended_actions.length > 0 && (
                 <div className="section">
-                  <h3>Recommended actions</h3>
+                  <div className="section-head">
+                    <h3>Recommended actions</h3>
+                    <span className="badge">{result.verdict.recommended_actions.length}</span>
+                  </div>
                   <ul className="bullets">
                     {result.verdict.recommended_actions.map((a, i) => <li key={i}>{a}</li>)}
                   </ul>
@@ -264,8 +451,8 @@ function App() {
 
               {result.verdict.abstention_reason && (
                 <div className="section">
-                  <h3>Why Bernard abstained</h3>
-                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                  <div className="section-head"><h3>Why Bernard abstained</h3></div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, fontSize: '0.9rem' }}>
                     {result.verdict.abstention_reason}
                   </p>
                 </div>
@@ -277,79 +464,128 @@ function App() {
 
       {tab === 'evidence' && (
         <div className="tab-content">
-          {!result && <p style={{ color: 'var(--text-secondary)' }}>Run an analysis to see evidence.</p>}
-          {result && (
-            <div>
-              {result.evidence.map((e, i) => (
-                <div key={i} className="evidence-row">
-                  <div className="analyzer">{e.analyzer}</div>
-                  <div className="field">{e.field}</div>
-                  <div>
-                    <div className="value">{formatValue(e.value)}</div>
-                    <div className="description">{e.description}</div>
-                  </div>
-                  <div className={`verdict-pill sev-${e.severity}`}>{e.severity}</div>
+          {!result && <EmptyState icon={I.inbox} title="No analysis yet" body="Run a scan to see the full evidence audit." />}
+          {result && evidenceGroups.map((g) => {
+            const collapsed = collapsedGroups.has(g.analyzer);
+            return (
+              <div key={g.analyzer} className={`evidence-group ${collapsed ? 'collapsed' : ''}`}>
+                <div className="evidence-group-head" onClick={() => toggleGroup(g.analyzer)}>
+                  <span className="chevron">{I.chevron}</span>
+                  <span className="name">{g.analyzer}</span>
+                  <span className="count">{g.items.length}</span>
+                  <span className={`max-sev sev-${g.maxSev}`}>{g.maxSev}</span>
                 </div>
-              ))}
-            </div>
-          )}
+                <div className="evidence-body">
+                  {g.items.map((e, i) => (
+                    <div key={i} className="evidence-row">
+                      <div className="field">{e.field}</div>
+                      <div>
+                        <div className="value">{formatValue(e.value)}</div>
+                        {e.description && <div className="desc">{e.description}</div>}
+                        {e.source_url && (
+                          <a className="intel-link" href={e.source_url} target="_blank" rel="noreferrer">
+                            ↗ view source
+                          </a>
+                        )}
+                      </div>
+                      <div className={`sev sev-${e.severity}`}>{e.severity}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {tab === 'mitre' && (
         <div className="tab-content">
-          {!result && <p style={{ color: 'var(--text-secondary)' }}>Run an analysis to see MITRE mapping.</p>}
+          {!result && <EmptyState icon={I.shield} title="No analysis yet" body="MITRE ATT&CK techniques will show up here after a scan." />}
           {result && result.verdict.mitre_techniques.length === 0 && (
-            <p style={{ color: 'var(--text-secondary)' }}>
-              No MITRE ATT&amp;CK techniques mapped. Either the evidence didn't support any technique,
-              or the MITRE catalog isn't loaded (run <code>python scripts/bootstrap_mitre.py</code>).
-            </p>
+            <EmptyState
+              icon={I.help}
+              title="No techniques mapped"
+              body={
+                health?.mitre_loaded
+                  ? 'The evidence collected did not justify any MITRE ATT&CK technique. This is expected for benign or inconclusive verdicts.'
+                  : 'MITRE catalog not loaded. Run `python scripts/bootstrap_mitre.py` to enable technique mapping.'
+              }
+            />
           )}
-          {result?.verdict.mitre_techniques.map((t, i) => (
-            <div key={i} style={{ padding: '1rem 0', borderBottom: '1px solid var(--border)' }}>
-              <div>
-                <span className="mitre-chip"><strong>{t.technique_id}</strong> {t.name}</span>
+          {result?.verdict.mitre_techniques.length ? (
+            <>
+              <div className="mitre-list">
+                {result.verdict.mitre_techniques.map((t) => (
+                  <button
+                    key={t.technique_id}
+                    className="mitre-chip"
+                    onClick={() => { setExpandedMitre(expandedMitre === t.technique_id ? null : t.technique_id); fetchTechnique(t.technique_id); }}
+                    title={t.name}
+                  >
+                    <strong>{t.technique_id}</strong> · {t.name}
+                  </button>
+                ))}
               </div>
-              <p style={{ marginTop: '0.5rem', color: 'var(--text-primary)' }}>{t.rationale}</p>
-              <div style={{ marginTop: '0.4rem' }}>
-                {t.cites.map((c, j) => <span key={j} className="cite">{c}</span>)}
-              </div>
-            </div>
-          ))}
+              {result.verdict.mitre_techniques
+                .filter((t) => expandedMitre === t.technique_id)
+                .map((t) => {
+                  const meta = techCache[t.technique_id];
+                  return (
+                    <div key={t.technique_id} className="mitre-card">
+                      <div className="mitre-card-head">
+                        <span className="mitre-id">{t.technique_id}</span>
+                        <span className="mitre-name">{t.name}</span>
+                        {meta?.tactics?.length ? (
+                          <span className="mitre-tactic">{meta.tactics.join(' · ')}</span>
+                        ) : null}
+                      </div>
+                      <div className="mitre-rationale">{t.rationale}</div>
+                      {meta?.description && (
+                        <div className="mitre-description">{meta.description}</div>
+                      )}
+                      <div className="mitre-cites">
+                        {t.cites.map((c, j) => <span key={j} className="cite">{c}</span>)}
+                      </div>
+                      {meta?.url && (
+                        <a className="intel-link" href={meta.url} target="_blank" rel="noreferrer">
+                          ↗ View on attack.mitre.org
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+            </>
+          ) : null}
         </div>
       )}
 
       {tab === 'history' && (
         <div className="tab-content">
-          {history.length === 0 && (
-            <p style={{ color: 'var(--text-secondary)' }}>No past analyses yet. Run one to start building history.</p>
-          )}
-          {history.length > 0 && (
-            <table>
+          {history.length === 0 ? (
+            <EmptyState icon={I.inbox} title="No past analyses yet" body="Run a scan to start building history." />
+          ) : (
+            <table className="history-table">
               <thead>
                 <tr>
-                  <th>Target</th><th>Kind</th><th>Verdict</th><th>Severity</th><th>Evidence</th><th>When</th><th></th>
+                  <th>Target</th><th>Kind</th><th>Verdict</th><th>Severity</th><th>Evidence</th><th>When</th>
                 </tr>
               </thead>
               <tbody>
                 {history.map((h) => (
-                  <tr key={h.id}>
-                    <td className="mono" style={{ wordBreak: 'break-all' }}>{h.value}</td>
-                    <td>{h.kind}</td>
+                  <tr key={h.id} onClick={() => loadHistorical(h.id)}>
+                    <td className="mono" style={{ wordBreak: 'break-all', maxWidth: '280px' }}>{h.value}</td>
+                    <td><span className="kind-chip">{h.kind}</span></td>
                     <td>
-                      <span className={`verdict-pill ${h.classification === 'malicious' ? 'sev-critical'
-                        : h.classification === 'suspicious' ? 'sev-medium'
-                        : h.classification === 'benign' ? 'sev-info'
-                        : 'sev-low'}`}>
-                        {h.classification}
-                      </span>
+                      <span className={`sev ${h.classification === 'malicious' ? 'sev-critical'
+                          : h.classification === 'suspicious' ? 'sev-medium'
+                          : h.classification === 'benign' ? 'sev-info'
+                          : 'sev-low'}`}>{h.classification}</span>
                     </td>
-                    <td><span className={`verdict-pill sev-${h.severity}`}>{h.severity}</span></td>
-                    <td>{h.evidence_count}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                    <td><span className={`sev sev-${h.severity}`}>{h.severity}</span></td>
+                    <td className="dim">{h.evidence_count}</td>
+                    <td className="dim" style={{ fontSize: '0.78rem' }}>
                       {new Date(h.created_at).toLocaleString()}
                     </td>
-                    <td><button className="link-btn" onClick={() => loadHistorical(h.id)}>Open</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -361,13 +597,23 @@ function App() {
   );
 }
 
+function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+  return (
+    <div className="empty-state">
+      <div className="icon">{icon}</div>
+      <h4>{title}</h4>
+      <p>{body}</p>
+    </div>
+  );
+}
+
 function formatValue(v: unknown): string {
   if (v === null || v === undefined) return '—';
-  if (typeof v === 'string') return v.length > 200 ? v.slice(0, 200) + '…' : v;
+  if (typeof v === 'string') return v.length > 240 ? v.slice(0, 240) + '…' : v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   try {
-    const s = JSON.stringify(v);
-    return s.length > 200 ? s.slice(0, 200) + '…' : s;
+    const s = JSON.stringify(v, null, 0);
+    return s.length > 240 ? s.slice(0, 240) + '…' : s;
   } catch {
     return String(v);
   }

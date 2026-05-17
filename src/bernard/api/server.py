@@ -35,7 +35,26 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": CONFIG.llm.model, "vt_configured": bool(CONFIG.intel.vt_api_key)}
+    from ..intel.mitre import MITRE
+    return {
+        "status": "ok",
+        "model": CONFIG.llm.model,
+        "llm_configured": bool(CONFIG.llm.api_key),
+        "vt_configured": bool(CONFIG.intel.vt_api_key),
+        "abuseipdb_configured": bool(CONFIG.intel.abuseipdb_api_key),
+        "abusech_configured": bool(CONFIG.intel.abusech_api_key),
+        "mitre_loaded": MITRE.is_loaded(),
+        "version": "2.0.0",
+    }
+
+
+@app.get("/technique/{technique_id}")
+async def get_technique(technique_id: str):
+    from ..intel.mitre import MITRE
+    meta = MITRE.get(technique_id)
+    if not meta:
+        raise HTTPException(404, f"Technique not found: {technique_id}")
+    return {"technique_id": technique_id, **meta}
 
 
 def _save_upload(upload: UploadFile) -> Path:
