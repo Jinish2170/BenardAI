@@ -1,0 +1,46 @@
+[project]
+name = "bernard"
+version = "2.0.0"
+description = "Bernard — self-hosted AI threat triage workstation"
+authors = [{ name = "Jinish Dhola", email = "jinish2170@gmail.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "python-multipart>=0.0.12",   # FastAPI file uploads
+  "pydantic>=2.9",
+  "httpx>=0.27",
+  "python-dotenv>=1.0",
+  "openai>=1.50",                # OpenAI-compatible client → NVIDIA NIM
+  "lief>=0.15",                  # PE/ELF/Mach-O parsing
+  "oletools>=0.60",              # Office macros / OLE
+  "yara-x>=1.0",                 # YARA-X Python bindings
+  "mitreattack-python>=3.0",
+  "vt-py>=0.18",
+  "python-magic-bin>=0.4; sys_platform == 'win32'",
+  "python-magic>=0.4; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.7",
+]
+
+[project.scripts]
+bernard = "bernard.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bernard"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

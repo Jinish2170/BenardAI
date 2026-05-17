@@ -1,2 +1,59 @@
-
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 *.pkl
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Bernard runtime data (regenerable)
+analyses/
+rules/yara-forge/
+rules/yara-forge.zip
+data/mitre-attack-stix/
+
+# Uploaded samples (must not be committed)
+uploads/
+
+# Local examples (binaries the user staged for testing — never redistribute)
+examples/*.exe
+examples/*.dll
+examples/*.bin
+examples/*.zip
+examples/*.docm
+examples/*.xlsm
+examples/*.pdf
+
+# Logs
+*.log
+
+# Secrets
+*.pem
+*.key
+credentials.json
+secrets.yaml
