@@ -157,8 +157,7 @@ bernard scan --file sample.docm --json   # raw JSON for piping
 If `LLM_API_KEY` is empty, Bernard automatically resolves it from `NVIDIA_NIM_API_KEY` in your central [cc-nim](https://github.com/cc-nim/cc-nim) `.env`. Default lookup order:
 
 1. `$CCNIM_ENV` (explicit override)
-2. `C:\files\coding dev era\claude code\cc-nim\.env`
-3. `~/cc-nim/.env`
+2. `~/cc-nim/.env`
 
 That means you keep a single source of truth for the NVIDIA NIM key and Bernard picks it up without copying it around. Set `LLM_API_KEY` in `.env` to override.
 
